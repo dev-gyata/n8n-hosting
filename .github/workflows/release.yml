@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/**"
+      - "CHANGELOG.md"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - uses: azure/setup-helm@v4
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          version: "3.17.0"
+
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.release_created == 'true'
+
+      - name: Log in to GHCR
+        if: steps.release.outputs.release_created == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push to GHCR
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          CHART_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          helm package charts/n8n --destination /tmp/chart-pkg/
+          helm push "/tmp/chart-pkg/n8n-${CHART_VERSION}.tgz" oci://ghcr.io/n8n-io/n8n-helm-chart
